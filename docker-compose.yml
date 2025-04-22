@@ -1,0 +1,162 @@
+services:
+  counter_kafka_app_be:
+    container_name: counter_kafka_app_be
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      - BOOTSTRAP_SERVERS=kafka1:9092,kafka2:9094
+    volumes:
+      - ./backend:/app
+    command: ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "${PORT:-8000}", "--reload"]
+    # command: ["tail", "-f", "/dev/null"]
+    networks:
+      - counter_kafka_app_network
+
+  counter_kafka_app_fe:
+    container_name: counter_kafka_app_fe
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "${PORT:-5173}:5173"
+    depends_on:
+      - counter_kafka_app_be
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules # This is to avoid the node_modules folder from being deleted
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "${PORT:-5173}"]
+    networks:
+      - counter_kafka_app_network
+
+  kafka1: 
+    image: bitnami/kafka:latest
+    container_name: kafka1
+    ports:
+      - 9092:9092
+      - 9093:9093
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka1:9092
+      - ALLOW_PLAINTEXT_LISTENER=yes
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller
+      - KAFKA_CFG_NODE_ID=1
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka1:9093,2@kafka2:9095
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CLUSTER_ID=my-kafka-cluster
+      - KAFKA_CFG_KRAFT_MODE_ENABLED=true
+    healthcheck:
+      test: ["CMD", "kafka-topics.sh", "--bootstrap-server", "kafka1:9092", "--list"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - counter_kafka_app_network
+  
+  kafka2: 
+    image: bitnami/kafka:latest
+    container_name: kafka2
+    ports:
+      - 9094:9094
+      - 9095:9095
+    environment:
+      - KAFKA_BROKER_ID=2
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://0.0.0.0:9094,CONTROLLER://0.0.0.0:9095
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka2:9094
+      - ALLOW_PLAINTEXT_LISTENER=yes
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller
+      - KAFKA_CFG_NODE_ID=2
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka1:9093,2@kafka2:9095
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CLUSTER_ID=my-kafka-cluster
+      - KAFKA_CFG_KRAFT_MODE_ENABLED=true
+    healthcheck:
+      test: ["CMD", "kafka-topics.sh", "--bootstrap-server", "kafka2:9094", "--list"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - counter_kafka_app_network
+
+  
+  topic_creator:
+    image: bitnami/kafka:latest
+    container_name: topic_creator
+    command: ["kafka-topics.sh", "--create", "--topic", "user-likes-counter", "--bootstrap-server", "kafka1:9092,kafka2:9094", "--partitions", "2", "--replication-factor", "1"]
+    depends_on:
+      - kafka1
+      - kafka2  
+    networks:
+      - counter_kafka_app_network
+
+  
+  # defining two consumers to consume the topic user-likes-counter
+  consumer1:
+    build:
+      context: ./consumer
+      dockerfile: Dockerfile
+    container_name: consumer1
+    environment:
+      - PARTITION_ID=0
+      - TOPIC=user-likes-counter
+      - BOOTSTRAP_SERVERS=kafka1:9092,kafka2:9094
+      - GROUP_ID=consumer-group-1
+      - AUTO_OFFSET_RESET=earliest
+    # command: ["tail", "-f", "/dev/null"]
+    command: ["python", "-u", "consumer.py"]
+    depends_on:
+      kafka1:
+        condition: service_healthy
+      kafka2:
+        condition: service_healthy
+    networks:
+      - counter_kafka_app_network
+
+  consumer2:
+    build:
+      context: ./consumer
+      dockerfile: Dockerfile
+    container_name: consumer2
+    environment:
+      - PARTITION_ID=1
+      - TOPIC=user-likes-counter
+      - BOOTSTRAP_SERVERS=kafka1:9092,kafka2:9094
+      - GROUP_ID=consumer-group-1
+      - AUTO_OFFSET_RESET=earliest
+    command: ["python", "-u", "consumer.py"]
+    depends_on:
+      kafka1:
+        condition: service_healthy
+      kafka2:
+        condition: service_healthy
+    networks:
+      - counter_kafka_app_network
+
+  # message_producer:
+  #   image: bitnami/kafka:latest
+  #   container_name: message_producer
+  #   command: >
+  #     bash -c "
+  #       echo 'Waiting for Kafka to be ready...';
+  #       sleep 2;
+  #       echo 'Publishing message...';
+  #       echo '{\"user_id\": \"123\", \"movie_id\": \"456\", \"action\": \"like\"}' | kafka-console-producer.sh --bootstrap-server kafka1:9092,kafka2:9094 --topic user-likes-counter;
+  #       echo 'Message published successfully!'
+  #     "
+  #   depends_on:
+  #     - kafka1
+  #     - kafka2
+  #   networks:
+  #     - counter_kafka_app_network
+      
+networks:
+  counter_kafka_app_network:
+    driver: bridge
+
