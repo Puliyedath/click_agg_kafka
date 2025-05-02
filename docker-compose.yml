@@ -8,10 +8,20 @@ services:
       - "${PORT:-8000}:8000"
     environment:
       - BOOTSTRAP_SERVERS=kafka1:9092,kafka2:9094
+      - REDIS_HOST=counter-redis-db
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redis
     volumes:
       - ./backend:/app
     command: ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "${PORT:-8000}", "--reload"]
     # command: ["tail", "-f", "/dev/null"]
+    depends_on:
+      counter-redis-db:
+        condition: service_healthy
+      kafka1:
+        condition: service_healthy
+      kafka2:
+        condition: service_healthy
     networks:
       - counter_kafka_app_network
 
@@ -109,7 +119,12 @@ services:
       - BOOTSTRAP_SERVERS=kafka1:9092,kafka2:9094
       - GROUP_ID=consumer-group-1
       - AUTO_OFFSET_RESET=earliest
+      - REDIS_HOST=counter-redis-db
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redis
     # command: ["tail", "-f", "/dev/null"]
+    volumes:
+      - ./consumer:/app
     command: ["python", "-u", "consumer.py"]
     depends_on:
       kafka1:
@@ -131,6 +146,8 @@ services:
       - GROUP_ID=consumer-group-1
       - AUTO_OFFSET_RESET=earliest
     command: ["python", "-u", "consumer.py"]
+    volumes:
+      - ./consumer:/app
     depends_on:
       kafka1:
         condition: service_healthy
@@ -139,22 +156,24 @@ services:
     networks:
       - counter_kafka_app_network
 
-  # message_producer:
-  #   image: bitnami/kafka:latest
-  #   container_name: message_producer
-  #   command: >
-  #     bash -c "
-  #       echo 'Waiting for Kafka to be ready...';
-  #       sleep 2;
-  #       echo 'Publishing message...';
-  #       echo '{\"user_id\": \"123\", \"movie_id\": \"456\", \"action\": \"like\"}' | kafka-console-producer.sh --bootstrap-server kafka1:9092,kafka2:9094 --topic user-likes-counter;
-  #       echo 'Message published successfully!'
-  #     "
-  #   depends_on:
-  #     - kafka1
-  #     - kafka2
-  #   networks:
-  #     - counter_kafka_app_network
+  counter-redis-db:
+    container_name: counter-redis-db
+    image: redis:latest
+    ports:
+      - 6379:6379
+    networks:
+      - counter_kafka_app_network
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-redis}
+    volumes:
+      - ./redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "0.0.0.0", "-p", "6379", "-a", "${REDIS_PASSWORD:-redis}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-redis}"]
       
 networks:
   counter_kafka_app_network:
