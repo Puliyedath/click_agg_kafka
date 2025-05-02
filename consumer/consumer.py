@@ -1,8 +1,11 @@
 import os
 import sys
 import json
+import redis
 
-from confluent_kafka import Consumer, TopicPartition, KafkaException
+from confluent_kafka import Consumer, KafkaException
+
+r = redis.Redis(host=os.getenv("REDIS_HOST", "counter-redis-db"), port=os.getenv("REDIS_PORT", 6379), password=os.getenv("REDIS_PASSWORD", "redis") )
 
 def main():
     try:
@@ -31,7 +34,8 @@ def main():
         print(f"Consumer created successfully")
         
         # Assign to specific partition
-        consumer.assign([TopicPartition(TOPIC, PARTITION_ID)])
+        # consumer.assign([TopicPartition(TOPIC, PARTITION_ID)])
+        consumer.subscribe([TOPIC])
         print(f"Assigned to partition {PARTITION_ID}")
         
         print(f"Starting to consume messages...")
@@ -51,6 +55,8 @@ def main():
                     message_value = msg.value().decode('utf-8')
                     message_data = json.loads(message_value)
                     print(f"Received message: {message_data}")
+                    r.hincrby(message_data["video_id"], message_data["event"], 1)
+                    print(f"Updated Redis for video {message_data['video_id']} with event {message_data['event']}")
                 except json.JSONDecodeError:
                     print(f"Received non-JSON message: {message_value}")
                 except Exception as e:

@@ -1,8 +1,19 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Button, Heading, HStack } from '@chakra-ui/react'
 
 
 export default function Actions({ video_id, user_id }: { video_id: string, user_id: string }) {
+    const [likesData, setLikesData] = useState("");
+    useEffect(() => {
+        const id = setInterval(() => {  
+            fetch(`http://localhost:8000/likes/${video_id}`)
+                .then(res => res.json())
+                .then(data => {
+                    setLikesData(JSON.stringify(data));
+                })
+        }, 1000)
+        return () => clearInterval(id)
+    }, [video_id])
 
     function onclick(action: string) {
         fetch(`http://localhost:8000/${action}`, {
@@ -14,6 +25,7 @@ export default function Actions({ video_id, user_id }: { video_id: string, user_
         })
     }
     return (
+        <>
         <HStack gap={4}>
             <Heading as="h2" size="sm">{video_id}-{user_id}</Heading>
             <Button 
@@ -34,6 +46,9 @@ export default function Actions({ video_id, user_id }: { video_id: string, user_
             >
                 Dislike
             </Button>
+            
         </HStack>
+        <Heading as="h2" size="sm">LikesData: {likesData}</Heading>
+        </>
     );
 }
