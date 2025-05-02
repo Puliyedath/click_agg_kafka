@@ -87,8 +87,23 @@ async def like(request: Request):
 async def dislike(request: Request):
     await send_kafka_message(request, "dislike")
 
-@app.get("/likes/{video_id}")
-async def likes(video_id: str):
-    print("hareesh=", r)
-    return {"message": r.hgetall(video_id), "video_id": video_id}
+@app.get("/top-videos")
+async def top_videos():
+    likes = r.zrange("video_likes_counter", 0, 4, withscores=True)
+    dislikes = r.zrange("video_dislikes_counter", 0, 4, withscores=True)
+    # get the video_id from the likes and dislikes
+    likes_video_ids = [int(like[0]) for like in likes]
+    dislikes_video_ids = [int(dislike[0]) for dislike in dislikes]
+    # get the video details from redis
+    print("likes_video_ids=", likes_video_ids)
+    print("dislikes_video_ids=", dislikes_video_ids)
+    pipeline = r.pipeline()
+    video_ids = likes_video_ids + dislikes_video_ids
+    for video_id in video_ids:
+        pipeline.hgetall(video_id)
+    video_details = pipeline.execute()
+    return {
+        "video_details": {
+            video_id: video_detail for video_id, video_detail in zip(video_ids, video_details)}
+    }
     
