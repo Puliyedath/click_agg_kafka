@@ -24,6 +24,7 @@ async def lifespan(app: FastAPI):
     })
     r = redis.Redis(host=os.getenv("REDIS_HOST", "counter-redis-db"), port=os.getenv("REDIS_PORT", 6379), password=os.getenv("REDIS_PASSWORD", "redis") )
     pubsub = r.pubsub(ignore_subscribe_messages=True)
+    await pubsub.subscribe("video_likes_counter")
     print(f"Redis connected to {os.getenv('REDIS_HOST', 'counter-redis-db')}:{os.getenv('REDIS_PORT', 6379)}")
     yield
     print("Shutting down...flush producer")
@@ -114,8 +115,6 @@ async def top_videos():
 
 @app.get("/sse")
 async def sse(request: Request):
-    global pubsub
-    await pubsub.subscribe("video_likes_counter")
     async def generate_sse_events(request: Request):
         try:
              async for message in pubsub.listen():
@@ -141,9 +140,6 @@ async def sse(request: Request):
         except Exception as e:
             print(f"Error in generate_sse_events: {e}")
             raise e
-        finally:
-            await pubsub.unsubscribe("video_likes_counter")
-            await pubsub.close()
 
     return StreamingResponse(
         generate_sse_events(request), media_type="text/event-stream")
