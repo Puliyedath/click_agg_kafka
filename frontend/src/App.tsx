@@ -5,18 +5,27 @@ import Actions from './components/Actions';
 import { useEffect, useState } from 'react';
 
 function App() {
-  
+
   const [likesData, setLikesData] = useState("");
-    useEffect(() => {
-        const id = setInterval(() => {  
-            fetch(`http://localhost:8000/top-videos`)
-                .then(res => res.json())
-                .then(data => {
-                    setLikesData(JSON.stringify(data));
-                })
-        }, 1000)
-        return () => clearInterval(id)
-    }, [])
+  useEffect(() =>{
+    const eventSource = new EventSource("http://localhost:8000/sse");
+    eventSource.onmessage = (event) => {
+      console.log("event.data", event.data);
+      setLikesData(event.data);
+    }
+    return () => eventSource.close();
+  }, [])
+    // useEffect(() => {
+    //     const id = setInterval(() => {  
+    //         fetch(`http://localhost:8000/top-videos`)
+    //             .then(res => res.json())
+    //             .then(data => {
+    //               console.log("data from top videos", data);
+    //                 // setLikesData(JSON.stringify(data));
+    //             })
+    //     }, 1000)
+    //     return () => clearInterval(id)
+    // }, [])
 
   return (
     <ChakraProvider value={defaultSystem}>

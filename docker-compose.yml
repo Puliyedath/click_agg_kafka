@@ -133,6 +133,17 @@ services:
         condition: service_healthy
     networks:
       - counter_kafka_app_network
+  
+  redis_cron_job:
+    build:
+      context: ./consumer
+      dockerfile: Dockerfile
+    container_name: redis_cron_job
+    command: ["python", "-u", "redis_cron_job.py"]
+    depends_on:
+      - counter-redis-db
+    networks:
+      - counter_kafka_app_network
 
   consumer2:
     build:

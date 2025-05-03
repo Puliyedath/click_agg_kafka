@@ -1,29 +1,34 @@
+import asyncio
 from contextlib import asynccontextmanager
 import json
 import os
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from confluent_kafka import Producer
-import redis
+from fastapi.responses import StreamingResponse
+import redis.asyncio as redis
 
 producer = None
 r = None
+pubsub = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global producer
     global r
+    global pubsub
     print("Starting up...")
     producer = Producer({
         "bootstrap.servers": os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka1:9092,kafka2:9094"),
         "acks": "all"
     })
     r = redis.Redis(host=os.getenv("REDIS_HOST", "counter-redis-db"), port=os.getenv("REDIS_PORT", 6379), password=os.getenv("REDIS_PASSWORD", "redis") )
+    pubsub = r.pubsub(ignore_subscribe_messages=True)
     print(f"Redis connected to {os.getenv('REDIS_HOST', 'counter-redis-db')}:{os.getenv('REDIS_PORT', 6379)}")
     yield
     print("Shutting down...flush producer")
     producer.flush()  
-    r.close()
+    await r.close()
 
 app = FastAPI(lifespan=lifespan)
 
@@ -89,21 +94,58 @@ async def dislike(request: Request):
 
 @app.get("/top-videos")
 async def top_videos():
-    likes = r.zrange("video_likes_counter", 0, 4, withscores=True)
-    dislikes = r.zrange("video_dislikes_counter", 0, 4, withscores=True)
+    likes = await r.zrange("video_likes_counter", 0, 4, withscores=True)
+    dislikes = await r.zrange("video_dislikes_counter", 0, 4, withscores=True)
     # get the video_id from the likes and dislikes
     likes_video_ids = [int(like[0]) for like in likes]
     dislikes_video_ids = [int(dislike[0]) for dislike in dislikes]
     # get the video details from redis
     print("likes_video_ids=", likes_video_ids)
     print("dislikes_video_ids=", dislikes_video_ids)
-    pipeline = r.pipeline()
+    pipeline = await r.pipeline()
     video_ids = likes_video_ids + dislikes_video_ids
     for video_id in video_ids:
-        pipeline.hgetall(video_id)
-    video_details = pipeline.execute()
+        await pipeline.hgetall(video_id)
+    video_details = await pipeline.execute()
     return {
         "video_details": {
             video_id: video_detail for video_id, video_detail in zip(video_ids, video_details)}
     }
+
+@app.get("/sse")
+async def sse(request: Request):
+    global pubsub
+    await pubsub.subscribe("video_likes_counter")
+    async def generate_sse_events(request: Request):
+        try:
+             async for message in pubsub.listen():
+                if (await request.is_disconnected()):
+                    break
+                if message is None or message["type"] != "message":
+                    continue
+                data = json.loads(message.get("data").decode("utf-8"))
+                video_ids = [int(d['member']) for d in data]
+                pipeline = await r.pipeline()
+                for video_id in video_ids:
+                    await pipeline.hgetall(video_id)
+                video_details = await pipeline.execute()
+
+                payload = {
+                    int(video_id): {
+                        k.decode("utf-8"): v.decode("utf-8")
+                        for k, v in video_detail.items()
+                    }
+                    for video_id, video_detail in zip(video_ids, video_details)
+                }
+                yield f"data: {json.dumps(payload)}\n\n"
+        except Exception as e:
+            print(f"Error in generate_sse_events: {e}")
+            raise e
+        finally:
+            await pubsub.unsubscribe("video_likes_counter")
+            await pubsub.close()
+
+    return StreamingResponse(
+        generate_sse_events(request), media_type="text/event-stream")
+
     

@@ -8,4 +8,4 @@ RUN pip install  --no-cache-dir --upgrade -r requirements.txt
 
 COPY . .
 
-CMD ["python", "consumer.py"]
+CMD ["python", "consumer.py", "redis_cron_job.py"]
